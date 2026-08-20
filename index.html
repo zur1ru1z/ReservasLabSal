@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Reservas de Laboratorio | PrepaTec</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase Firebase SDK setup for Shared Cloud Database -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ============================================================
+        // FIREBASE CONFIGURATION - REPLACE THESE VALUES
+        // Get these values from Firebase Console > Project settings
+        // > Your apps > Web app > SDK setup and configuration.
+        // ============================================================
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "AIzaSyDRUO4MIJP5ZHp32GePg-ahzbz-3cQCSnk",
+            authDomain: "reservas-lab-prepatec-sal.firebaseapp.com",
+            projectId: "reservas-lab-prepatec-sal",
+            storageBucket: "reservas-lab-prepatec-sal.firebasestorage.app",
+            messagingSenderId: "832373267375",
+            appId: "1:832373267375:web:3479e547c44fc598096d5a"
+        };
+
+        // Application identifier used by this reservation system.
+        // You can keep this value as-is.
+        const appId = 'prepatec-labs-app';
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        window.db = db;
+        window.auth = auth;
+        window.appId = appId;
+        window.firestoreMethods = { collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDocs };
+
+        // Authenticate user before initiating Firestore operations
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.warn("Auth initialization fallback:", err);
+                await signInAnonymously(auth).catch(e => console.error("Anonymous auth failed:", e));
+            }
+        }
+
+        initAuth().then(() => {
+            if (window.startCloudSync) {
+                window.startCloudSync();
+            }
+        });
+    </script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        tec: {
+                            blue: '#003399',
+                            darkblue: '#002060',
+                            lightblue: '#0066ff',
+                            accent: '#00a8cc',
+                            light: '#f4f7fc'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        
+        /* Print styles for physical reports */
+        @media print {
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            body { background: white; color: black; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col antialiased">
+
+    <!-- Navbar / Header -->
+    <header class="bg-tec-darkblue text-white shadow-lg sticky top-0 z-30 no-print">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Brand / Logo -->
+                <div class="flex items-center space-x-3 cursor-pointer" onclick="switchTab('calendar')">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-tec-blue to-tec-accent flex items-center justify-center font-bold text-white shadow-md">
+                        <i class="fa-solid fa-vial-virus text-lg"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-lg sm:text-xl font-bold tracking-tight leading-tight flex items-center gap-2">
+                            PrepaTec <span class="text-xs bg-tec-accent/30 text-teal-200 px-2 py-0.5 rounded-full font-semibold border border-teal-400/30">Labs</span>
+                        </h1>
+                        <p class="text-xs text-blue-200 hidden sm:block">Control de Reservas de Laboratorios</p>
+                    </div>
+                </div>
+
+                <!-- Desktop Navigation Tabs -->
+                <nav class="hidden md:flex items-center space-x-1">
+                    <button onclick="switchTab('calendar')" id="tab-btn-calendar" class="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 bg-tec-blue text-white shadow-inner">
+                        <i class="fa-regular fa-calendar-days"></i> Calendario
+                    </button>
+                    <button onclick="switchTab('list')" id="tab-btn-list" class="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-blue-100 hover:bg-white/10">
+                        <i class="fa-solid fa-list-check"></i> Listado Completo
+                    </button>
+                    <button onclick="switchTab('publish-guide')" id="tab-btn-publish-guide" class="px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-blue-100 hover:bg-white/10">
+                        <i class="fa-solid fa-globe"></i> Publicar (Google/GitHub)
+                    </button>
+                </nav>
+
+                <!-- Actions / Quick New Button -->
+                <div class="flex items-center space-x-2">
+                    <button onclick="openModal('reservation-modal')" class="bg-emerald-500 hover:bg-emerald-600 text-white px-3.5 py-2 rounded-lg text-sm font-semibold shadow-sm transition-all flex items-center gap-2 hover:scale-105 active:scale-95">
+                        <i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Nueva Reserva</span>
+                    </button>
+                    
+                    <!-- Mobile Menu Toggle Button -->
+                    <button onclick="toggleMobileMenu()" class="md:hidden p-2 rounded-lg text-blue-100 hover:bg-white/10">
+                        <i class="fa-solid fa-bars text-lg"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Navigation Menu -->
+        <div id="mobile-menu" class="hidden md:hidden border-t border-blue-800/50 bg-tec-darkblue px-4 pt-2 pb-4 space-y-1">
+            <button onclick="switchTab('calendar')" class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-white hover:bg-white/10 flex items-center gap-2">
+                <i class="fa-regular fa-calendar-days"></i> Calendario Semanal
+            </button>
+            <button onclick="switchTab('list')" class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-white hover:bg-white/10 flex items-center gap-2">
+                <i class="fa-solid fa-list-check"></i> Listado Completo
+            </button>
+            <button onclick="switchTab('publish-guide')" class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-white hover:bg-white/10 flex items-center gap-2">
+                <i class="fa-solid fa-globe"></i> Guía de Publicación
+            </button>
+        </div>
+    </header>
+
+    <!-- Sub-Header Filter Bar -->
+    <section class="bg-white border-b border-slate-200 shadow-sm py-3 px-4 sm:px-6 lg:px-8 no-print">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+            
+            <!-- Filters -->
+            <div class="flex flex-wrap items-center gap-2.5">
+                <!-- Lab Filter -->
+                <div class="relative min-w-[180px]">
+                    <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-400 text-xs">
+                        <i class="fa-solid fa-flask"></i>
+                    </span>
+                    <select id="filter-lab" onchange="renderApp()" class="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs sm:text-sm font-medium text-slate-700 focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                        <option value="ALL">Laboratorio</option>
+                        <option value="Laboratorio">Laboratorio</option>
+                    </select>
+                </div>
+
+                <!-- Status Filter -->
+                <div class="relative min-w-[140px]">
+                    <select id="filter-status" onchange="renderApp()" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs sm:text-sm font-medium text-slate-700 focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                        <option value="ALL">Todos los Estados</option>
+                        <option value="Confirmada">Confirmadas</option>
+                        <option value="Pendiente">Pendientes</option>
+                        <option value="Completada">Completadas</option>
+                        <option value="Cancelada">Canceladas</option>
+                    </select>
+                </div>
+
+                <!-- Search Input -->
+                <div class="relative flex-1 min-w-[200px]">
+                    <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center text-slate-400 text-xs">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                    </span>
+                    <input type="text" id="filter-search" oninput="renderApp()" placeholder="Buscar por profesor, materia o grupo..." class="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs sm:text-sm text-slate-700 focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                </div>
+            </div>
+
+            <!-- Global Action Buttons -->
+            <div class="flex items-center gap-2 justify-end">
+                <button onclick="exportToCSV()" title="Descargar como Excel/CSV" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-file-excel text-emerald-600"></i> Exportar CSV
+                </button>
+                <button onclick="backupJSON()" title="Descargar Copia de Seguridad" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-download text-tec-blue"></i> Backup
+                </button>
+                <label title="Cargar Backup o CSV" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer">
+                    <i class="fa-solid fa-upload text-amber-600"></i> Cargar
+                    <input type="file" id="import-file" onchange="importData(event)" accept=".json,.csv" class="hidden">
+                </label>
+            </div>
+        </div>
+    </section>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+
+        <!-- STATS OVERVIEW CARDS -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6 no-print">
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Reservas</p>
+                    <p id="stat-total" class="text-2xl font-bold text-slate-800 mt-1">0</p>
+                </div>
+                <div class="w-10 h-10 rounded-lg bg-blue-50 text-tec-blue flex items-center justify-center font-bold text-lg">
+                    <i class="fa-regular fa-calendar-check"></i>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Confirmadas</p>
+                    <p id="stat-confirmed" class="text-2xl font-bold text-emerald-600 mt-1">0</p>
+                </div>
+                <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-lg">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pendientes</p>
+                    <p id="stat-pending" class="text-2xl font-bold text-amber-600 mt-1">0</p>
+                </div>
+                <div class="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center font-bold text-lg">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Alumnos Atendidos</p>
+                    <p id="stat-students" class="text-2xl font-bold text-indigo-600 mt-1">0</p>
+                </div>
+                <div class="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg">
+                    <i class="fa-solid fa-graduation-cap"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 1: WEEKLY CALENDAR VIEW -->
+        <section id="view-calendar" class="space-y-4">
+            <!-- Week Controller -->
+            <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                    <button onclick="changeWeek(-1)" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-600 transition">
+                        <i class="fa-solid fa-chevron-left text-xs"></i>
+                    </button>
+                    <span id="current-week-label" class="text-sm font-bold text-slate-700 min-w-[200px] text-center">
+                        Semana actual
+                    </span>
+                    <button onclick="changeWeek(1)" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-600 transition">
+                        <i class="fa-solid fa-chevron-right text-xs"></i>
+                    </button>
+                    <button onclick="resetToCurrentWeek()" class="ml-2 px-2.5 py-1 text-xs font-semibold text-tec-blue bg-blue-50 hover:bg-blue-100 rounded-md transition">
+                        Hoy
+                    </button>
+                </div>
+
+                <!-- Legend -->
+                <div class="flex flex-wrap items-center gap-3 text-xs text-slate-600 font-medium">
+                    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span> Confirmada</span>
+                    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span> Pendiente</span>
+                    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-slate-400 inline-block"></span> Completada</span>
+                    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-rose-400 inline-block"></span> Cancelada</span>
+                </div>
+            </div>
+
+            <!-- Calendar Schedule Matrix -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+                <table class="w-full text-left border-collapse min-w-[850px]">
+                    <thead>
+                        <tr class="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-600 uppercase">
+                            <th class="p-3 w-28 text-center border-r border-slate-200">Horario</th>
+                            <th class="p-3 border-r border-slate-200 text-center w-1/5" id="col-mon">Lunes</th>
+                            <th class="p-3 border-r border-slate-200 text-center w-1/5" id="col-tue">Martes</th>
+                            <th class="p-3 border-r border-slate-200 text-center w-1/5" id="col-wed">Miércoles</th>
+                            <th class="p-3 border-r border-slate-200 text-center w-1/5" id="col-thu">Jueves</th>
+                            <th class="p-3 text-center w-1/5" id="col-fri">Viernes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="calendar-grid-body" class="divide-y divide-slate-200 text-xs">
+                        <!-- Dynamic schedule row generation via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- TAB 2: LIST VIEW -->
+        <section id="view-list" class="hidden space-y-4">
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-table-list text-tec-blue"></i> Registro General de Solicitudes
+                    </h2>
+                    <span id="list-counter-badge" class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-semibold">
+                        Mostrando 0 registros
+                    </span>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[900px]">
+                        <thead>
+                            <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
+                                <th class="p-3.5">ID / Fecha</th>
+                                <th class="p-3.5">Horario</th>
+                                <th class="p-3.5">Laboratorio</th>
+                                <th class="p-3.5">Profesor / Nómina</th>
+                                <th class="p-3.5">Materia / Grupo</th>
+                                <th class="p-3.5 text-center">Alumnos</th>
+                                <th class="p-3.5 text-center">Estado</th>
+                                <th class="p-3.5 text-right no-print">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="list-table-body" class="divide-y divide-slate-200 text-xs text-slate-700">
+                            <!-- Dynamic row generation via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 3: PUBLISH GUIDE VIEW -->
+        <section id="view-publish-guide" class="hidden space-y-6">
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-4xl mx-auto space-y-6">
+                <div>
+                    <h2 class="text-xl font-bold text-tec-darkblue flex items-center gap-2">
+                        <i class="fa-solid fa-cloud-arrow-up text-tec-blue"></i>
+                        Guía de Publicación e Integración Web
+                    </h2>
+                    <p class="text-sm text-slate-600 mt-1">
+                        Sigue estos pasos sencillos para hospedar este sistema de forma 100% gratuita y publicarlo en tu sitio institucional.
+                    </p>
+                </div>
+
+                <!-- Option A: GitHub Pages -->
+                <div class="border border-slate-200 rounded-xl p-5 bg-gradient-to-br from-slate-50 to-blue-50/30">
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold">
+                            <i class="fa-brands fa-github text-lg"></i>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-800">Opción 1: Publicar en GitHub Pages (Recomendado)</h3>
+                            <p class="text-xs text-slate-500">Te dará un enlace web directo accesible por todos los profesores.</p>
+                        </div>
+                    </div>
+                    <ol class="list-decimal list-inside text-xs sm:text-sm text-slate-700 space-y-2 pl-2">
+                        <li>Crea un repositorio público en <a href="https://github.com" target="_blank" class="text-tec-blue font-bold underline">GitHub.com</a> (ej. <code class="bg-slate-200 px-1.5 py-0.5 rounded text-xs">reservas-prepatec</code>).</li>
+                        <li>Sube este archivo guardándolo obligatoriamente como <code class="bg-slate-200 px-1.5 py-0.5 rounded text-xs font-bold text-slate-900">index.html</code>.</li>
+                        <li>Ve a la pestaña <strong>Settings (Configuración)</strong> &gt; <strong>Pages</strong> en tu repositorio.</li>
+                        <li>En <em>Branch (Rama)</em> selecciona <code class="bg-slate-200 px-1 py-0.5 rounded text-xs">main</code> o <code class="bg-slate-200 px-1 py-0.5 rounded text-xs">master</code> y haz clic en <strong>Save</strong>.</li>
+                        <li>¡Listo! En 1 minuto tendrás una URL web pública como: <br>
+                            <span class="inline-block mt-1 bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded font-mono text-xs">https://tu-usuario.github.io/reservas-prepatec/</span>
+                        </li>
+                    </ol>
+                </div>
+
+                <!-- Option B: Google Sites -->
+                <div class="border border-slate-200 rounded-xl p-5 bg-gradient-to-br from-slate-50 to-emerald-50/30">
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold">
+                            <i class="fa-solid fa-globe text-lg"></i>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-800">Opción 2: Incrustar en Google Sites</h3>
+                            <p class="text-xs text-slate-500">Inserta la herramienta dentro del portal de tu departamento de PrepaTec.</p>
+                        </div>
+                    </div>
+                    <div class="space-y-3 text-xs sm:text-sm text-slate-700">
+                        <p><strong>Método A (Si ya publicaste en GitHub Pages):</strong></p>
+                        <ol class="list-decimal list-inside pl-2 space-y-1">
+                            <li>En tu editor de <strong>Google Sites</strong>, dirígete a la sección <strong>Insertar</strong> &gt; <strong>Incrustar (&lt;/&gt;)</strong>.</li>
+                            <li>Selecciona la pestaña <strong>Mediante URL</strong> e introduce la URL de GitHub Pages.</li>
+                            <li>Ajusta el tamaño del recuadro para cubrir el alto de la pantalla.</li>
+                        </ol>
+
+                        <p class="pt-2"><strong>Método B (Insertar código directo en Google Sites):</strong></p>
+                        <ol class="list-decimal list-inside pl-2 space-y-1">
+                            <li>En Google Sites, haz clic en <strong>Insertar</strong> &gt; <strong>Incrustar (&lt;/&gt;)</strong>.</li>
+                            <li>Selecciona la pestaña <strong>Incrustar código</strong>.</li>
+                            <li>Abre este archivo HTML con el Bloc de notas o VS Code, copia todo el código y pégalo.</li>
+                            <li>Haz clic en <strong>Siguiente</strong> &gt; <strong>Insertar</strong>.</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <!-- Persistence Note -->
+                <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-900 flex gap-3">
+                    <i class="fa-solid fa-cloud text-tec-blue text-lg mt-0.5"></i>
+                    <div>
+                        <strong class="font-bold">Sincronización en Tiempo Real en la Nube</strong>
+                        <p class="mt-0.5">Las reservaciones ahora se guardan automáticamente en la nube. Cualquier profesor o usuario que ingrese a la página verá los mismos datos en tiempo real de forma inmediata en cualquier dispositivo.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- MODAL: ADD / EDIT RESERVATION -->
+    <div id="reservation-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden transition-opacity">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+            
+            <!-- Modal Header -->
+            <div class="bg-tec-darkblue text-white px-6 py-4 flex items-center justify-between">
+                <h3 id="modal-title" class="text-base font-bold flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-plus text-tec-accent"></i> Registrar Nueva Reserva de Laboratorio
+                </h3>
+                <button onclick="closeModal('reservation-modal')" class="text-slate-300 hover:text-white text-lg p-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Modal Form Body -->
+            <form id="reservation-form" onsubmit="handleSaveReservation(event)" class="p-6 overflow-y-auto space-y-4">
+                <input type="hidden" id="form-id">
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Professor Name -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Nombre del Profesor *</label>
+                        <input type="text" id="form-professor" required placeholder="Ej. Dr. Roberto Garza" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                    </div>
+
+                    <!-- Nomina / Email -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Nómina / Correo Tec *</label>
+                        <input type="text" id="form-nomina" required placeholder="L01234567 / rgarza@tec.mx" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                    </div>
+
+                    <!-- Subject / Materia -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Materia *</label>
+                        <input type="text" id="form-subject" required placeholder="Ej. Química Fundamental" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                    </div>
+
+                    <!-- Group & Student Count -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Grupo *</label>
+                            <input type="text" id="form-group" required placeholder="Ej. Gpo 101" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Alumnos *</label>
+                            <input type="number" id="form-students" min="1" max="60" value="25" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                        </div>
+                    </div>
+
+                    <!-- Laboratory Selection -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Laboratorio Requerido *</label>
+                        <select id="form-lab" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none bg-white">
+                            <option value="Laboratorio">Laboratorio</option>
+                        </select>
+                    </div>
+
+                    <!-- Status -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Estado de Reserva *</label>
+                        <select id="form-status" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none bg-white">
+                            <option value="Confirmada">Confirmada</option>
+                            <option value="Pendiente">Pendiente por Aprobar</option>
+                            <option value="Completada">Completada</option>
+                            <option value="Cancelada">Cancelada</option>
+                        </select>
+                    </div>
+
+                    <!-- Date -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Fecha de Práctica *</label>
+                        <input type="date" id="form-date" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                    </div>
+
+                    <!-- Time Slot -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Bloque Horario *</label>
+                        <select id="form-time-slot" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none bg-white">
+                            <option value="07:00 - 08:30">07:00 - 08:30 hrs</option>
+                            <option value="08:35 - 10:05">08:35 - 10:05 hrs</option>
+                            <option value="10:15 - 11:45">10:15 - 11:45 hrs</option>
+                            <option value="11:50 - 13:20">11:50 - 13:20 hrs</option>
+                            <option value="13:25 - 14:55">13:25 - 14:55 hrs</option>
+                            <option value="15:00 - 16:30">15:00 - 16:30 hrs</option>
+                            <option value="16:35 - 18:05">16:35 - 18:05 hrs</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Observations -->
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Observaciones / Notas Adicionales</label>
+                    <input type="text" id="form-notes" placeholder="Ej. Se requiere proyector y acceso especial" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-tec-blue focus:outline-none">
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="pt-4 border-t border-slate-200 flex items-center justify-end gap-3">
+                    <button type="button" onclick="closeModal('reservation-modal')" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition">
+                        Cancelar
+                    </button>
+                    <button type="submit" class="px-5 py-2 bg-tec-blue hover:bg-tec-darkblue text-white rounded-lg text-xs font-bold shadow-md transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-floppy-disk"></i> Guardar Reserva
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: VIEW DETAILS -->
+    <div id="details-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-150">
+            <div id="details-header" class="bg-tec-blue text-white p-5 flex items-center justify-between">
+                <div>
+                    <span id="details-status-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-white/20 text-white"></span>
+                    <h3 id="details-subject" class="text-lg font-bold mt-1"></h3>
+                </div>
+                <button onclick="closeModal('details-modal')" class="text-white/80 hover:text-white p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-5 space-y-3 text-xs sm:text-sm">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span class="text-slate-500 font-semibold"><i class="fa-solid fa-user-tie text-tec-blue w-5"></i> Profesor:</span>
+                    <span id="details-professor" class="font-bold text-slate-800"></span>
+                </div>
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span class="text-slate-500 font-semibold"><i class="fa-solid fa-id-badge text-tec-blue w-5"></i> Nómina:</span>
+                    <span id="details-nomina" class="font-medium text-slate-700"></span>
+                </div>
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span class="text-slate-500 font-semibold"><i class="fa-solid fa-flask text-tec-blue w-5"></i> Laboratorio:</span>
+                    <span id="details-lab" class="font-bold text-slate-800"></span>
+                </div>
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span class="text-slate-500 font-semibold"><i class="fa-regular fa-calendar text-tec-blue w-5"></i> Fecha:</span>
+                    <span id="details-date" class="font-medium text-slate-700"></span>
+                </div>
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span class="text-slate-500 font-semibold"><i class="fa-regular fa-clock text-tec-blue w-5"></i> Horario:</span>
+                    <span id="details-time" class="font-medium text-slate-700"></span>
+                </div>
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span class="text-slate-500 font-semibold"><i class="fa-solid fa-users text-tec-blue w-5"></i> Grupo y Alumnos:</span>
+                    <span id="details-group" class="font-medium text-slate-700"></span>
+                </div>
+                <div id="details-notes-container">
+                    <span class="text-slate-500 font-semibold block mb-1"><i class="fa-regular fa-comment text-tec-blue w-5"></i> Observaciones:</span>
+                    <p id="details-notes" class="text-slate-600 text-xs"></p>
+                </div>
+            </div>
+
+            <div class="bg-slate-50 px-5 py-3 border-t border-slate-200 flex items-center justify-between">
+                <button id="btn-delete-details" class="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg text-xs font-bold transition flex items-center gap-1">
+                    <i class="fa-solid fa-trash-can"></i> Eliminar
+                </button>
+                <div class="flex items-center gap-2">
+                    <button id="btn-edit-details" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-bold transition flex items-center gap-1">
+                        <i class="fa-solid fa-pen-to-square"></i> Editar
+                    </button>
+                    <button onclick="closeModal('details-modal')" class="px-4 py-1.5 bg-tec-blue text-white rounded-lg text-xs font-bold">
+                        Cerrar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION BANNER -->
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2"></div>
+
+    <script>
+        // Default initial sample data formatted for PrepaTec
+        const SAMPLE_DATA = [
+            {
+                professor: 'Mtra. Ana María Morales',
+                nomina: 'L00984712',
+                subject: 'Química Fundamental',
+                group: 'Gpo 101',
+                students: 28,
+                lab: 'Laboratorio',
+                status: 'Confirmada',
+                date: getRelativeDate(0), // Today
+                timeSlot: '08:35 - 10:05',
+                notes: 'Práctica de titulación ácido-base.'
+            },
+            {
+                professor: 'Dr. Carlos Mendoza',
+                nomina: 'L01284930',
+                subject: 'Física II: Mecánica',
+                group: 'Gpo 302',
+                students: 24,
+                lab: 'Laboratorio',
+                status: 'Confirmada',
+                date: getRelativeDate(0), // Today
+                timeSlot: '10:15 - 11:45',
+                notes: 'Práctica de conservación de la cantidad de movimiento.'
+            },
+            {
+                professor: 'Dra. Sofía Villareal',
+                nomina: 'L03492019',
+                subject: 'Biología y Sustentabilidad',
+                group: 'Gpo 104',
+                students: 30,
+                lab: 'Laboratorio',
+                status: 'Confirmada',
+                date: getRelativeDate(1), // Tomorrow
+                timeSlot: '07:00 - 08:30',
+                notes: 'Uso de microscopios y tinción celular.'
+            },
+            {
+                professor: 'Ing. Fernando Rios',
+                nomina: 'L05829102',
+                subject: 'Diseño e Innovación STEAM',
+                group: 'Gpo 501',
+                students: 20,
+                lab: 'Laboratorio',
+                status: 'Pendiente',
+                date: getRelativeDate(2), // +2 Days
+                timeSlot: '11:50 - 13:20',
+                notes: 'Prototipado rápido de proyecto integrador.'
+            }
+        ];
+
+        // TIME SLOTS CONFIGURATION
+        const TIME_SLOTS = [
+            '07:00 - 08:30',
+            '08:35 - 10:05',
+            '10:15 - 11:45',
+            '11:50 - 13:20',
+            '13:25 - 14:55',
+            '15:00 - 16:30',
+            '16:35 - 18:05'
+        ];
+
+        // State variables
+        let reservations = [];
+        let currentWeekOffset = 0; // 0 = current week
+
+        // Helper date utility
+        function getRelativeDate(offsetDays) {
+            const date = new Date();
+            date.setDate(date.getDate() + offsetDays);
+            return date.toISOString().split('T')[0];
+        }
+
+        // Load on start
+        window.addEventListener('DOMContentLoaded', () => {
+            // Set default date in form to today
+            document.getElementById('form-date').value = getRelativeDate(0);
+        });
+
+        // Real-Time Shared Cloud Synchronization
+        window.startCloudSync = function() {
+            if (!window.db) return;
+            const { collection, onSnapshot, addDoc, getDocs } = window.firestoreMethods;
+            const resCol = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'reservations');
+
+            // Listen for changes in Firestore
+            onSnapshot(resCol, (snapshot) => {
+                if (snapshot.empty) {
+                    // Seed initial data if database is empty
+                    SAMPLE_DATA.forEach(sample => {
+                        addDoc(resCol, sample);
+                    });
+                } else {
+                    reservations = snapshot.docs.map(docSnap => ({
+                        id: docSnap.id,
+                        ...docSnap.data()
+                    }));
+                    renderApp();
+                }
+            }, (error) => {
+                console.error("Firestore sync error:", error);
+                showToast('Error al conectar con la base de datos en la nube', 'error');
+            });
+        };
+
+        function switchTab(tabName) {
+            // Tab Buttons
+            ['calendar', 'list', 'publish-guide'].forEach(t => {
+                const btn = document.getElementById(`tab-btn-${t}`);
+                if (btn) {
+                    if (t === tabName) {
+                        btn.className = "px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 bg-tec-blue text-white shadow-inner font-bold";
+                    } else {
+                        btn.className = "px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-blue-100 hover:bg-white/10";
+                    }
+                }
+
+                const view = document.getElementById(`view-${t}`);
+                if (view) {
+                    if (t === tabName) {
+                        view.classList.remove('hidden');
+                    } else {
+                        view.classList.add('hidden');
+                    }
+                }
+            });
+
+            // Close mobile menu if open
+            document.getElementById('mobile-menu').classList.add('hidden');
+            renderApp();
+        }
+
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            menu.classList.toggle('hidden');
+        }
+
+        function getFilteredReservations() {
+            const labFilter = document.getElementById('filter-lab').value;
+            const statusFilter = document.getElementById('filter-status').value;
+            const searchQuery = document.getElementById('filter-search').value.toLowerCase().trim();
+
+            return reservations.filter(res => {
+                // Lab Match
+                const matchLab = (labFilter === 'ALL') || res.lab === labFilter;
+                
+                // Status Match
+                const matchStatus = (statusFilter === 'ALL') || res.status === statusFilter;
+
+                // Search Query Match
+                const matchSearch = !searchQuery || 
+                    (res.professor && res.professor.toLowerCase().includes(searchQuery)) ||
+                    (res.subject && res.subject.toLowerCase().includes(searchQuery)) ||
+                    (res.group && res.group.toLowerCase().includes(searchQuery)) ||
+                    (res.nomina && res.nomina.toLowerCase().includes(searchQuery));
+
+                return matchLab && matchStatus && matchSearch;
+            });
+        }
+
+        function renderApp() {
+            const filtered = getFilteredReservations();
+            
+            // Update Dashboard Stats
+            document.getElementById('stat-total').innerText = filtered.length;
+            document.getElementById('stat-confirmed').innerText = filtered.filter(r => r.status === 'Confirmada').length;
+            document.getElementById('stat-pending').innerText = filtered.filter(r => r.status === 'Pendiente').length;
+            
+            const totalStudents = filtered.reduce((acc, curr) => acc + (parseInt(curr.students) || 0), 0);
+            document.getElementById('stat-students').innerText = totalStudents;
+
+            // Render Views
+            renderCalendarView(filtered);
+            renderListView(filtered);
+        }
+
+        function getWeekDates(offsetWeeks = 0) {
+            const today = new Date();
+            const currentDay = today.getDay(); // 0 is Sun, 1 is Mon
+            const distanceToMon = currentDay === 0 ? -6 : 1 - currentDay;
+            
+            const monday = new Date(today);
+            monday.setDate(today.getDate() + distanceToMon + (offsetWeeks * 7));
+
+            const week = [];
+            for (let i = 0; i < 5; i++) { // Monday to Friday
+                const day = new Date(monday);
+                day.setDate(monday.getDate() + i);
+                week.push(day);
+            }
+            return week;
+        }
+
+        function changeWeek(direction) {
+            currentWeekOffset += direction;
+            renderApp();
+        }
+
+        function resetToCurrentWeek() {
+            currentWeekOffset = 0;
+            renderApp();
+        }
+
+        function renderCalendarView(filteredData) {
+            const weekDates = getWeekDates(currentWeekOffset);
+            
+            // Header date labels
+            const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+            const dayColIds = ['col-mon', 'col-tue', 'col-wed', 'col-thu', 'col-fri'];
+            
+            const startDateStr = weekDates[0].toLocaleDateString('es-MX', { month: 'short', day: 'numeric' });
+            const endDateStr = weekDates[4].toLocaleDateString('es-MX', { month: 'short', day: 'numeric', year: 'numeric' });
+            
+            document.getElementById('current-week-label').innerText = `${startDateStr} - ${endDateStr}`;
+
+            weekDates.forEach((d, idx) => {
+                const dayNameStr = d.toLocaleDateString('es-MX', { weekday: 'short' });
+                const dayNumStr = d.toLocaleDateString('es-MX', { day: 'numeric', month: 'numeric' });
+                const colEl = document.getElementById(dayColIds[idx]);
+                if (colEl) {
+                    const isToday = d.toDateString() === new Date().toDateString();
+                    colEl.innerHTML = `
+                        <div class="${isToday ? 'bg-tec-blue text-white rounded-lg py-1 shadow-sm' : ''}">
+                            <span class="capitalize font-bold">${dayNameStr}</span>
+                            <span class="block text-[10px] ${isToday ? 'text-blue-100' : 'text-slate-400'}">${dayNumStr}</span>
+                        </div>
+                    `;
+                }
+            });
+
+            // Grid Rows
+            const tbody = document.getElementById('calendar-grid-body');
+            tbody.innerHTML = '';
+
+            TIME_SLOTS.forEach(slot => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50/80 transition-colors";
+
+                // Time cell
+                let html = `
+                    <td class="p-2.5 text-center font-semibold text-slate-500 bg-slate-50/50 border-r border-slate-200 text-[11px]">
+                        ${slot.replace(' - ', '<br>')}
+                    </td>
+                `;
+
+                // Days cells
+                weekDates.forEach(dateObj => {
+                    const dateISO = dateObj.toISOString().split('T')[0];
+                    
+                    // Find reservations matching date and slot
+                    const matches = filteredData.filter(r => r.date === dateISO && r.timeSlot === slot);
+
+                    html += `<td class="p-1.5 border-r border-slate-200 align-top h-24 w-1/5 relative">`;
+
+                    if (matches.length > 0) {
+                        matches.forEach(res => {
+                            let badgeBg = 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100';
+                            let dotBg = 'bg-emerald-500';
+                            
+                            if (res.status === 'Pendiente') {
+                                badgeBg = 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100';
+                                dotBg = 'bg-amber-500';
+                            } else if (res.status === 'Completada') {
+                                badgeBg = 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200';
+                                dotBg = 'bg-slate-400';
+                            } else if (res.status === 'Cancelada') {
+                                badgeBg = 'bg-rose-50 border-rose-200 text-rose-800 hover:bg-rose-100 opacity-60';
+                                dotBg = 'bg-rose-400';
+                            }
+
+                            html += `
+                                <div onclick="openDetailsModal('${res.id}')" class="p-2 mb-1 rounded-lg border ${badgeBg} cursor-pointer transition shadow-2xs group relative">
+                                    <div class="flex items-center justify-between gap-1 mb-0.5">
+                                        <span class="font-bold truncate text-[11px] leading-tight group-hover:underline">${res.subject || 'Sin materia'}</span>
+                                        <span class="w-2 h-2 rounded-full ${dotBg} flex-shrink-0"></span>
+                                    </div>
+                                    <div class="text-[10px] text-slate-600 truncate">
+                                        <i class="fa-solid fa-flask opacity-60"></i> ${res.lab} | ${res.group}
+                                    </div>
+                                    <div class="text-[10px] font-medium text-slate-500 truncate mt-0.5">
+                                        <i class="fa-regular fa-user opacity-60"></i> ${res.professor ? res.professor.split(' ')[0] : 'Profesor'} ${res.professor && res.professor.split(' ')[1] ? res.professor.split(' ')[1] : ''}
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        // Empty slot button to add
+                        html += `
+                            <button onclick="quickAddReservation('${dateISO}', '${slot}')" class="w-full h-full min-h-[70px] border border-dashed border-transparent hover:border-slate-300 hover:bg-slate-100/60 rounded-lg text-slate-300 hover:text-slate-500 flex items-center justify-center transition group">
+                                <span class="text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition flex items-center gap-1">
+                                    <i class="fa-solid fa-plus"></i> Reservar
+                                </span>
+                            </button>
+                        `;
+                    }
+
+                    html += `</td>`;
+                });
+
+                tr.innerHTML = html;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderListView(filteredData) {
+            const tbody = document.getElementById('list-table-body');
+            tbody.innerHTML = '';
+
+            document.getElementById('list-counter-badge').innerText = `Mostrando ${filteredData.length} registros`;
+
+            if (filteredData.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-8 text-slate-400 italic">
+                            No se encontraron reservas con los filtros aplicados.
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            // Sort by date desc
+            const sorted = [...filteredData].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            sorted.forEach(res => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50 transition border-b border-slate-100";
+
+                let statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">Confirmada</span>`;
+                if (res.status === 'Pendiente') statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">Pendiente</span>`;
+                if (res.status === 'Completada') statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">Completada</span>`;
+                if (res.status === 'Cancelada') statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">Cancelada</span>`;
+
+                tr.innerHTML = `
+                    <td class="p-3.5 font-mono text-[11px] text-slate-500">
+                        <span class="font-bold text-slate-700 block">${res.id.substring(0, 8)}</span>
+                        <span>${res.date}</span>
+                    </td>
+                    <td class="p-3.5 font-medium text-slate-700">${res.timeSlot}</td>
+                    <td class="p-3.5 font-semibold text-tec-blue">${res.lab}</td>
+                    <td class="p-3.5">
+                        <div class="font-bold text-slate-800">${res.professor}</div>
+                        <div class="text-[10px] text-slate-400 font-mono">${res.nomina}</div>
+                    </td>
+                    <td class="p-3.5">
+                        <div class="font-medium text-slate-800">${res.subject}</div>
+                        <div class="text-[10px] text-slate-500">${res.group}</div>
+                    </td>
+                    <td class="p-3.5 text-center font-bold text-slate-700">${res.students}</td>
+                    <td class="p-3.5 text-center">${statusBadge}</td>
+                    <td class="p-3.5 text-right space-x-1 no-print">
+                        <button onclick="openDetailsModal('${res.id}')" title="Ver Detalle" class="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                        <button onclick="openEditModal('${res.id}')" title="Editar" class="p-1.5 bg-blue-50 hover:bg-blue-100 text-tec-blue rounded-md transition">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button onclick="deleteReservation('${res.id}')" title="Eliminar" class="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-md transition">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.remove('hidden');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.add('hidden');
+        }
+
+        function quickAddReservation(dateStr, timeSlot) {
+            document.getElementById('reservation-form').reset();
+            document.getElementById('form-id').value = '';
+            document.getElementById('modal-title').innerHTML = '<i class="fa-solid fa-calendar-plus text-tec-accent"></i> Registrar Nueva Reserva';
+            
+            if (dateStr) document.getElementById('form-date').value = dateStr;
+            if (timeSlot) document.getElementById('form-time-slot').value = timeSlot;
+            
+            openModal('reservation-modal');
+        }
+
+        function openEditModal(resId) {
+            const res = reservations.find(r => r.id === resId);
+            if (!res) return;
+
+            document.getElementById('form-id').value = res.id;
+            document.getElementById('form-professor').value = res.professor || '';
+            document.getElementById('form-nomina').value = res.nomina || '';
+            document.getElementById('form-subject').value = res.subject || '';
+            document.getElementById('form-group').value = res.group || '';
+            document.getElementById('form-students').value = res.students || 25;
+            document.getElementById('form-lab').value = res.lab || 'Laboratorio';
+            document.getElementById('form-status').value = res.status || 'Confirmada';
+            document.getElementById('form-date').value = res.date || getRelativeDate(0);
+            document.getElementById('form-time-slot').value = res.timeSlot || '08:35 - 10:05';
+            document.getElementById('form-notes').value = res.notes || '';
+
+            document.getElementById('modal-title').innerHTML = '<i class="fa-solid fa-pen-to-square text-tec-accent"></i> Editar Reserva ' + res.id.substring(0,8);
+            
+            closeModal('details-modal');
+            openModal('reservation-modal');
+        }
+
+        async function handleSaveReservation(event) {
+            event.preventDefault();
+
+            const resId = document.getElementById('form-id').value;
+            const lab = document.getElementById('form-lab').value;
+            const date = document.getElementById('form-date').value;
+            const timeSlot = document.getElementById('form-time-slot').value;
+            const status = document.getElementById('form-status').value;
+
+            // Conflict Check: Check if another confirmed/pending reservation occupies same lab + date + timeSlot
+            const conflict = reservations.find(r => 
+                r.id !== resId && 
+                r.lab === lab && 
+                r.date === date && 
+                r.timeSlot === timeSlot && 
+                (r.status === 'Confirmada' || r.status === 'Pendiente')
+            );
+
+            if (conflict && (status === 'Confirmada' || status === 'Pendiente')) {
+                showToast(`¡Conflicto! El ${lab} ya está reservado el ${date} en el horario ${timeSlot} por ${conflict.professor}.`, 'error');
+                return;
+            }
+
+            const reservationData = {
+                professor: document.getElementById('form-professor').value.trim(),
+                nomina: document.getElementById('form-nomina').value.trim(),
+                subject: document.getElementById('form-subject').value.trim(),
+                group: document.getElementById('form-group').value.trim(),
+                students: parseInt(document.getElementById('form-students').value) || 1,
+                lab: lab,
+                status: status,
+                date: date,
+                timeSlot: timeSlot,
+                notes: document.getElementById('form-notes').value.trim()
+            };
+
+            const { collection, doc, addDoc, updateDoc } = window.firestoreMethods;
+            const resCol = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'reservations');
+
+            try {
+                if (resId) {
+                    // Update existing document in Cloud Firestore
+                    const docRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'reservations', resId);
+                    await updateDoc(docRef, reservationData);
+                    showToast('Reserva actualizada en la nube', 'success');
+                } else {
+                    // Create New document in Cloud Firestore
+                    await addDoc(resCol, reservationData);
+                    showToast('Nueva reserva registrada en la nube', 'success');
+                }
+            } catch (error) {
+                console.error("Error saving to Firestore:", error);
+                showToast('Error al guardar datos en la nube', 'error');
+            }
+
+            closeModal('reservation-modal');
+        }
+
+        function openDetailsModal(resId) {
+            const res = reservations.find(r => r.id === resId);
+            if (!res) return;
+
+            document.getElementById('details-subject').innerText = res.subject || '';
+            document.getElementById('details-status-badge').innerText = res.status || '';
+            document.getElementById('details-professor').innerText = res.professor || '';
+            document.getElementById('details-nomina').innerText = res.nomina || '';
+            document.getElementById('details-lab').innerText = res.lab || 'Laboratorio';
+            document.getElementById('details-date').innerText = res.date || '';
+            document.getElementById('details-time').innerText = res.timeSlot || '';
+            document.getElementById('details-group').innerText = `${res.group} (${res.students} alumnos)`;
+            
+            const notesContainer = document.getElementById('details-notes-container');
+            if (res.notes) {
+                notesContainer.classList.remove('hidden');
+                document.getElementById('details-notes').innerText = res.notes;
+            } else {
+                notesContainer.classList.add('hidden');
+            }
+
+            // Configure action buttons
+            document.getElementById('btn-edit-details').onclick = () => openEditModal(res.id);
+            document.getElementById('btn-delete-details').onclick = () => {
+                closeModal('details-modal');
+                deleteReservation(res.id);
+            };
+
+            openModal('details-modal');
+        }
+
+        async function deleteReservation(resId) {
+            const { doc, deleteDoc } = window.firestoreMethods;
+            const docRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'reservations', resId);
+
+            try {
+                await deleteDoc(docRef);
+                showToast('Reserva eliminada de la nube', 'info');
+            } catch (error) {
+                console.error("Error deleting document:", error);
+                showToast('Error al eliminar la reserva', 'error');
+            }
+        }
+
+        function exportToCSV() {
+            if (reservations.length === 0) {
+                showToast('No hay datos para exportar', 'error');
+                return;
+            }
+
+            const headers = ["ID", "Profesor", "Nomina", "Materia", "Grupo", "Alumnos", "Laboratorio", "Estado", "Fecha", "Horario", "Observaciones"];
+            const rows = reservations.map(r => [
+                `"${r.id}"`,
+                `"${r.professor}"`,
+                `"${r.nomina}"`,
+                `"${r.subject}"`,
+                `"${r.group}"`,
+                r.students,
+                `"${r.lab}"`,
+                `"${r.status}"`,
+                `"${r.date}"`,
+                `"${r.timeSlot}"`,
+                `"${(r.notes || '').replace(/"/g, '""')}"`
+            ]);
+
+            const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `Reservas_Laboratorio_PrepaTec_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            showToast('Archivo CSV descargado exitosamente', 'success');
+        }
+
+        function backupJSON() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(reservations, null, 2));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", `prepatec_labs_backup_${new Date().toISOString().split('T')[0]}.json`);
+            dlAnchorElem.click();
+            showToast('Respaldo JSON descargado', 'success');
+        }
+
+        async function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const { collection, addDoc } = window.firestoreMethods;
+            const resCol = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'reservations');
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const content = e.target.result;
+                    if (file.name.endsWith('.json')) {
+                        const imported = JSON.parse(content);
+                        if (Array.isArray(imported)) {
+                            for (const item of imported) {
+                                const { id, ...data } = item;
+                                await addDoc(resCol, data);
+                            }
+                            showToast('¡Datos cargados correctamente a la nube!', 'success');
+                        }
+                    } else if (file.name.endsWith('.csv')) {
+                        const lines = content.split('\n').filter(l => l.trim() !== '');
+                        if (lines.length > 1) {
+                            let count = 0;
+                            for (let i = 1; i < lines.length; i++) {
+                                const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
+                                if (cols.length >= 8) {
+                                    await addDoc(resCol, {
+                                        professor: cols[1] || 'Sin nombre',
+                                        nomina: cols[2] || 'N/A',
+                                        subject: cols[3] || 'Materia',
+                                        group: cols[4] || 'Gpo 101',
+                                        students: parseInt(cols[5]) || 20,
+                                        lab: cols[6] || 'Laboratorio',
+                                        status: cols[7] || 'Confirmada',
+                                        date: cols[8] || getRelativeDate(0),
+                                        timeSlot: cols[9] || '08:35 - 10:05',
+                                        notes: cols[10] || ''
+                                    });
+                                    count++;
+                                }
+                            }
+                            showToast(`¡Se importaron ${count} reservas a la nube!`, 'success');
+                        }
+                    }
+                } catch (err) {
+                    console.error("Error al importar datos:", err);
+                    showToast('Error al procesar el archivo cargado', 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let bgClass = 'bg-slate-800 text-white';
+            let icon = '<i class="fa-solid fa-circle-info text-blue-400"></i>';
+
+            if (type === 'success') {
+                bgClass = 'bg-emerald-800 text-emerald-100';
+                icon = '<i class="fa-solid fa-circle-check text-emerald-300"></i>';
+            } else if (type === 'error') {
+                bgClass = 'bg-rose-800 text-rose-100';
+                icon = '<i class="fa-solid fa-triangle-exclamation text-rose-300"></i>';
+            }
+
+            toast.className = `${bgClass} px-4 py-3 rounded-xl shadow-xl border border-white/10 text-xs font-semibold flex items-center gap-2.5 transform transition-all duration-300 translate-y-2 opacity-0`;
+            toast.innerHTML = `${icon} <span>${message}</span>`;
+
+            container.appendChild(toast);
+
+            // Animate in
+            setTimeout(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            }, 10);
+
+            // Remove after 3.5s
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+    </script>
+</body>
+</html>
